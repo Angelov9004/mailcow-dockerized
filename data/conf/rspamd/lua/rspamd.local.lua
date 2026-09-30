@@ -316,7 +316,7 @@ rspamd_config:register_symbol({
             else
               rspamd_http.request({
                 task=task,
-                url='http://nginx:8081/aliasexp.php',
+                url='http://nginx:8081/aliasexp',
                 body='',
                 callback=http_callback,
                 headers={Rcpt=rcpt['addr']},
@@ -420,7 +420,7 @@ rspamd_config:register_symbol({
         rspamd_logger.infox(rspamd_config, "checking bcc for rcpt address %s", e)
         rspamd_http.request({
           task=task,
-          url='http://nginx:8081/bcc.php',
+          url='http://nginx:8081/bcc',
           body='',
           callback=rcpt_callback,
           headers={Rcpt=e}
@@ -433,7 +433,7 @@ rspamd_config:register_symbol({
         rspamd_logger.infox(rspamd_config, "checking bcc for from address %s", e)
         rspamd_http.request({
           task=task,
-          url='http://nginx:8081/bcc.php',
+          url='http://nginx:8081/bcc',
           body='',
           callback=from_callback,
           headers={From=e}
@@ -689,7 +689,7 @@ rspamd_config:register_symbol({
     -- fetch footer
     rspamd_http.request({
       task=task,
-      url='http://nginx:8081/footer.php',
+      url='http://nginx:8081/footer',
       body='',
       callback=footer_cb,
       headers={Domain=env_from_domain,Username=uname,From=env_from_addr},

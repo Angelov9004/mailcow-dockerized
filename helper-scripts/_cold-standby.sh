@@ -118,7 +118,7 @@ SCRIPT_DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
 source "${SCRIPT_DIR}/../mailcow.conf"
 COMPOSE_FILE="${SCRIPT_DIR}/../docker-compose.yml"
 CMPS_PRJ=$(echo ${COMPOSE_PROJECT_NAME} | tr -cd 'A-Za-z-_')
-SQLIMAGE=$(grep -iEo '(mysql|mariadb)\:.+' "${COMPOSE_FILE}")
+SQLIMAGE=$(grep -iEo 'postgres\:.+' "${COMPOSE_FILE}" | head -n1)
 
 preflight_local_checks
 preflight_remote_checks
@@ -191,48 +191,41 @@ for vol in $(docker volume ls -qf name="${CMPS_PRJ}"); do
     -p ${REMOTE_SSH_PORT} \
     mkdir -p "${mountpoint}"
 
-  if [[ "${vol}" =~ "mysql-vol-1" ]]; then
+  if [[ "${vol}" =~ "postgres-vol-1" ]]; then
 
     # Make sure a previous backup does not exist
-    rm -rf "${SCRIPT_DIR}/../_tmp_mariabackup/"
+    rm -rf "${SCRIPT_DIR}/../_tmp_pgbackup/"
+    mkdir -p "${SCRIPT_DIR}/../_tmp_pgbackup/"
 
-    echo -e "\033[1mCreating consistent backup of MariaDB volume...\033[0m"
+    echo -e "\033[1mCreating consistent backup of PostgreSQL volume...\033[0m"
+    # pg_basebackup produces a physical, consistent copy of the running cluster that can be
+    # dropped into the remote data volume as-is
     if ! docker run --rm \
       --network $(docker network ls -qf name=${CMPS_PRJ}_) \
-      -v $(docker volume ls -qf name=${CMPS_PRJ}_mysql-vol-1):/var/lib/mysql/:ro \
+      -e PGPASSWORD="${DBPASS}" \
       --entrypoint= \
-      -v "${SCRIPT_DIR}/../_tmp_mariabackup":/backup \
-      ${SQLIMAGE} mariabackup --host mysql --user root --password ${DBROOT} --backup --target-dir=/backup 2>/dev/null ; then
-        >&2 echo -e "\e[31m[ERR]\e[0m - Could not create MariaDB backup on source"
-        rm -rf "${SCRIPT_DIR}/../_tmp_mariabackup/"
+      -v "${SCRIPT_DIR}/../_tmp_pgbackup":/backup \
+      ${SQLIMAGE} pg_basebackup -h postgres -U ${DBUSER} -D /backup -Fp -Xs -c fast 2>/dev/null ; then
+        >&2 echo -e "\e[31m[ERR]\e[0m - Could not create PostgreSQL backup on source"
+        rm -rf "${SCRIPT_DIR}/../_tmp_pgbackup/"
         exit 1
     fi
 
-    if ! docker run --rm \
-      --network $(docker network ls -qf name=${CMPS_PRJ}_) \
-      --entrypoint= \
-      -v "${SCRIPT_DIR}/../_tmp_mariabackup":/backup \
-      ${SQLIMAGE} mariabackup --prepare --target-dir=/backup 2> /dev/null ; then
-        >&2 echo -e "\e[31m[ERR]\e[0m - Could not transfer MariaDB backup to remote"
-        rm -rf "${SCRIPT_DIR}/../_tmp_mariabackup/"
-        exit 1
-    fi
+    chown -R 70:70 "${SCRIPT_DIR}/../_tmp_pgbackup"
 
-    chown -R 999:999 "${SCRIPT_DIR}/../_tmp_mariabackup"
-
-    echo -e "\033[1mSynchronizing MariaDB backup...\033[0m"
+    echo -e "\033[1mSynchronizing PostgreSQL backup...\033[0m"
     rsync --delete --info=progress2 -aH -e "ssh -o StrictHostKeyChecking=no \
       -i \"${REMOTE_SSH_KEY}\" \
       -p ${REMOTE_SSH_PORT}" \
-      "${SCRIPT_DIR}/../_tmp_mariabackup/" root@${REMOTE_SSH_HOST}:"${mountpoint}"
+      "${SCRIPT_DIR}/../_tmp_pgbackup/" root@${REMOTE_SSH_HOST}:"${mountpoint}"
     ec=$?
     if [ ${ec} -ne 0 ] && [ ${ec} -ne 24 ]; then
-      >&2 echo -e "\e[31m[ERR]\e[0m - Could not transfer MariaDB backup to remote"
+      >&2 echo -e "\e[31m[ERR]\e[0m - Could not transfer PostgreSQL backup to remote"
       exit 1
     fi
 
     # Cleanup
-    rm -rf "${SCRIPT_DIR}/../_tmp_mariabackup/"
+    rm -rf "${SCRIPT_DIR}/../_tmp_pgbackup/"
 
   elif [[ "${vol}" =~ "rspamd-vol-1" ]]; then
     # Exclude rspamd-vol-1 if the Architectures are not the same on source and destination due to compatibility issues.

@@ -81,7 +81,7 @@ smtp_enforced_tls      unix  -       -       n       -       -       smtp
 # smtp connector used, when a transport map matched
 # this helps to have different sasl maps than we have with sender dependent transport maps
 smtp_via_transport_maps      unix  -       -       n       -       -       smtp
-  -o smtp_sasl_password_maps=proxy:mysql:/opt/postfix/conf/sql/mysql_sasl_passwd_maps_transport_maps.cf
+  -o smtp_sasl_password_maps=proxy:pgsql:/opt/postfix/conf/sql/pgsql_sasl_passwd_maps_transport_maps.cf
 
 tlsproxy   unix  -       -       n       -       0       tlsproxy
 dnsblog    unix  -       -       n       -       0       dnsblog

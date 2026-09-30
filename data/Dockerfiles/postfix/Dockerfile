@@ -21,10 +21,10 @@ RUN groupadd -g 102 postfix \
   	dnsutils \
 	gnupg \
 	libsasl2-modules \
-  	mariadb-client \
+  	postgresql-client \
 	perl \
 	postfix \
-	postfix-mysql \
+	postfix-pgsql \
 	postfix-pcre \
 	redis-tools \
 	sasl2-bin \

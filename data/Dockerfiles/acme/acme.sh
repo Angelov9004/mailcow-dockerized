@@ -117,13 +117,15 @@ fi
 chmod 600 ${ACME_BASE}/key.pem
 
 log_f "Waiting for database..."
-while ! /usr/bin/mariadb-admin status --ssl=false --socket=/var/run/mysqld/mysqld.sock -u${DBUSER} -p${DBPASS} --silent > /dev/null; do
+export PGPASSWORD="${DBPASS}"
+PSQL="psql -h ${DBHOST:-postgres} -p ${DBPORT:-5432} -U ${DBUSER} -d ${DBNAME} -qtA"
+while ! pg_isready -h ${DBHOST:-postgres} -p ${DBPORT:-5432} -U ${DBUSER} -d ${DBNAME} -q > /dev/null; do
   sleep 2
 done
 log_f "Database OK"
 
 log_f "Waiting for Nginx..."
-until $(curl --output /dev/null --silent --head --fail http://nginx.${COMPOSE_PROJECT_NAME}_mailcow-network:8081); do
+until $(curl --output /dev/null --silent --fail http://nginx.${COMPOSE_PROJECT_NAME}_mailcow-network:8081/forwardinghosts); do
   sleep 2
 done
 log_f "Nginx OK"
@@ -138,7 +140,7 @@ log_f "Resolver OK"
 log_f "Waiting for domain table..."
 while [[ -z ${DOMAIN_TABLE} ]]; do
   curl --silent http://nginx.${COMPOSE_PROJECT_NAME}_mailcow-network/ >/dev/null 2>&1
-  DOMAIN_TABLE=$(mariadb --skip-ssl --socket=/var/run/mysqld/mysqld.sock -u ${DBUSER} -p${DBPASS} ${DBNAME} -e "SHOW TABLES LIKE 'domain'" -Bs)
+  DOMAIN_TABLE=$(${PSQL} -c "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'domain'")
   [[ -z ${DOMAIN_TABLE} ]] && sleep 10
 done
 log_f "OK" no_date
@@ -231,7 +233,7 @@ while true; do
 
   #########################################
   # IP and webroot challenge verification #
-  SQL_DOMAINS=$(mariadb --skip-ssl --socket=/var/run/mysqld/mysqld.sock -u ${DBUSER} -p${DBPASS} ${DBNAME} -e "SELECT domain FROM domain WHERE backupmx=0 and active=1" -Bs)
+  SQL_DOMAINS=$(${PSQL} -c "SELECT domain FROM domain WHERE backupmx=0 and active=1")
   if [[ ! $? -eq 0 ]]; then
     log_f "Failed to read SQL domains, retrying in 1 minute..."
     sleep 1m

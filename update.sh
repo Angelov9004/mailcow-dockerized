@@ -415,8 +415,8 @@ adapt_new_options() {
     elif [[ ${option} == "SQL_PORT" ]]; then
       if ! grep -q ${option} mailcow.conf; then
         echo "Adding new option \"${option}\" to mailcow.conf"
-        echo '# Bind SQL to 127.0.0.1 on port 13306' >> mailcow.conf
-        echo "SQL_PORT=127.0.0.1:13306" >> mailcow.conf
+        echo '# Bind SQL (PostgreSQL) to 127.0.0.1 on port 15432' >> mailcow.conf
+        echo "SQL_PORT=127.0.0.1:15432" >> mailcow.conf
       fi
     elif [[ ${option} == "API_KEY" ]]; then
       if ! grep -q ${option} mailcow.conf; then
@@ -726,7 +726,9 @@ detect_major_update() {
     )
 
     current_version=""
-    if [[ -f "${SCRIPT_DIR}/data/web/inc/app_info.inc.php" ]]; then
+    if [[ -f "${SCRIPT_DIR}/data/api/app_info.json" ]]; then
+      current_version=$(grep 'MAILCOW_GIT_VERSION' ${SCRIPT_DIR}/data/api/app_info.json | sed -E 's/.*MAILCOW_GIT_VERSION": *"([^"]*)".*/\1/')
+    elif [[ -f "${SCRIPT_DIR}/data/web/inc/app_info.inc.php" ]]; then
       current_version=$(grep 'MAILCOW_GIT_VERSION' ${SCRIPT_DIR}/data/web/inc/app_info.inc.php | sed -E 's/.*MAILCOW_GIT_VERSION="([^"]+)".*/\1/')
     fi
     if [[ -z "$current_version" ]]; then
@@ -1059,8 +1061,8 @@ for option in "${CONFIG_ARRAY[@]}"; do
   elif [[ "${option}" == "SQL_PORT" ]]; then
     if ! grep -q "${option}" mailcow.conf; then
       echo "Adding new option \"${option}\" to mailcow.conf"
-      echo '# Bind SQL to 127.0.0.1 on port 13306' >> mailcow.conf
-      echo "SQL_PORT=127.0.0.1:13306" >> mailcow.conf
+      echo '# Bind SQL (PostgreSQL) to 127.0.0.1 on port 15432' >> mailcow.conf
+      echo "SQL_PORT=127.0.0.1:15432" >> mailcow.conf
     fi
   elif [[ "${option}" == "API_KEY" ]]; then
     if ! grep -q "${option}" mailcow.conf; then
@@ -1570,7 +1572,7 @@ if [ -f "data/conf/rspamd/local.d/metrics.conf" ]; then
   mv data/conf/rspamd/local.d/metrics.conf data/conf/rspamd/local.d/metrics.conf_deprecated
 fi
 
-# Set app_info.inc.php
+# Set data/api/app_info.json
 if [ ${BRANCH} == "master" ]; then
   mailcow_git_version=$(git describe --tags $(git rev-list --tags --max-count=1))
 elif [ ${BRANCH} == "nightly" ]; then
@@ -1584,30 +1586,25 @@ fi
 mailcow_git_commit=$(git rev-parse "origin/${BRANCH}")
 mailcow_git_commit_date=$(git log -1 --format=%ci @{upstream} )
 
+write_app_info() {
+  cat <<EOF > data/api/app_info.json
+{
+  "MAILCOW_GIT_VERSION": "$1",
+  "MAILCOW_LAST_GIT_VERSION": "",
+  "MAILCOW_GIT_OWNER": "mailcow",
+  "MAILCOW_GIT_REPO": "mailcow-dockerized",
+  "MAILCOW_GIT_URL": "https://github.com/mailcow/mailcow-dockerized",
+  "MAILCOW_GIT_COMMIT": "$2",
+  "MAILCOW_GIT_COMMIT_DATE": "$3",
+  "MAILCOW_BRANCH": "$4",
+  "MAILCOW_UPDATEDAT": $(date +%s)
+}
+EOF
+}
 if [ $? -eq 0 ]; then
-  echo '<?php' > data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_GIT_VERSION="'$mailcow_git_version'";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_LAST_GIT_VERSION="";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_GIT_OWNER="mailcow";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_GIT_REPO="mailcow-dockerized";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_GIT_URL="https://github.com/mailcow/mailcow-dockerized";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_GIT_COMMIT="'$mailcow_git_commit'";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_GIT_COMMIT_DATE="'$mailcow_git_commit_date'";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_BRANCH="'$BRANCH'";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_UPDATEDAT='$(date +%s)';' >> data/web/inc/app_info.inc.php
-  echo '?>' >> data/web/inc/app_info.inc.php
+  write_app_info "${mailcow_git_version}" "${mailcow_git_commit}" "${mailcow_git_commit_date}" "${BRANCH}"
 else
-  echo '<?php' > data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_GIT_VERSION="'$mailcow_git_version'";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_LAST_GIT_VERSION="";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_GIT_OWNER="mailcow";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_GIT_REPO="mailcow-dockerized";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_GIT_URL="https://github.com/mailcow/mailcow-dockerized";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_GIT_COMMIT="";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_GIT_COMMIT_DATE="";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_BRANCH="'$BRANCH'";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_UPDATEDAT='$(date +%s)';' >> data/web/inc/app_info.inc.php
-  echo '?>' >> data/web/inc/app_info.inc.php
+  write_app_info "${mailcow_git_version}" "" "" "${BRANCH}"
   echo -e "\e[33mCannot determine current git repository version...\e[0m"
 fi
 

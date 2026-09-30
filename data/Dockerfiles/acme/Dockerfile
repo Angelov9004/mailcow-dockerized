@@ -9,7 +9,7 @@ RUN apk upgrade --no-cache \
   openssl \
   bind-tools \
   jq \
-  mariadb-client \
+  postgresql-client \
   redis \
   tini \
   tzdata \

@@ -1,0 +1,9 @@
+[project]
+name = "mailcow-api"
+version = "2026.09"
+description = "mailcow UI/API on Python + PostgreSQL"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]

@@ -30,15 +30,11 @@ RUN addgroup -g 5000 vmail \
   lua \
   lua-cjson \
   lua-socket \
-  lua-sql-mysql \
-  lua5.3-sql-mysql \
   icu-data-full \
-  mariadb-connector-c \
   lua-sec \
-  mariadb-dev \
   glib-dev \
   gcompat \
-  mariadb-client \
+  postgresql-client \
   perl \
   perl-dev \
   perl-ntlm \
@@ -47,7 +43,7 @@ RUN addgroup -g 5000 vmail \
   perl-utils \
   perl-crypt-ssleay \
   perl-data-uniqid \
-  perl-dbd-mysql \
+  perl-dbd-pg \
   perl-dbi \
   perl-digest-hmac \
   perl-dist-checkconflicts \
@@ -88,7 +84,7 @@ RUN addgroup -g 5000 vmail \
   perl-app-cpanminus \
   procps \
   python3 \
-  py3-mysqlclient \
+  py3-psycopg2 \
   py3-html2text \
   py3-jinja2 \
   py3-redis \
@@ -104,7 +100,7 @@ RUN addgroup -g 5000 vmail \
   dovecot-lmtpd \
   dovecot-lua \
   dovecot-ldap \
-  dovecot-mysql \
+  dovecot-pgsql \
   dovecot-sql \
   dovecot-submissiond \
   dovecot-pigeonhole-plugin \

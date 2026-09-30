@@ -11,8 +11,8 @@ if [[ ! ${1} =~ (backup|restore) ]]; then
   exit 1
 fi
 
-if [[ ${1} == "backup" && ! ${2} =~ (crypt|vmail|redis|rspamd|postfix|mysql|all|--delete-days) ]]; then
-  echo "Second parameter needs to be 'vmail', 'crypt', 'redis', 'rspamd', 'postfix', 'mysql', 'all' or '--delete-days'"
+if [[ ${1} == "backup" && ! ${2} =~ (crypt|vmail|redis|rspamd|postfix|mysql|postgres|all|--delete-days) ]]; then
+  echo "Second parameter needs to be 'vmail', 'crypt', 'redis', 'rspamd', 'postfix', 'postgres', 'all' or '--delete-days'"
   exit 1
 fi
 
@@ -137,24 +137,21 @@ function backup() {
         -v $(docker volume ls -qf name=^${CMPS_PRJ}_postfix-vol-1$):/postfix:ro,z \
         ${DEBIAN_DOCKER_IMAGE} /bin/tar --warning='no-file-ignored' --use-compress-program="pigz --rsyncable -p ${THREADS}" -Pcvpf /backup/backup_postfix.tar.gz /postfix
       ;;&
-    mysql|all)
-      SQLIMAGE=$(grep -iEo '(mysql|mariadb)\:.+' ${COMPOSE_FILE})
+    mysql|postgres|all)
+      SQLIMAGE=$(grep -iEo 'postgres\:.+' ${COMPOSE_FILE} | head -n1)
       if [[ -z "${SQLIMAGE}" ]]; then
         echo "Could not determine SQL image version, skipping backup..."
         shift
         continue
       else
         echo "Using SQL image ${SQLIMAGE}, starting..."
+        # logical dump (pg_dump custom format) - consistent snapshot, restorable into any newer PostgreSQL
         docker run --name mailcow-backup --rm \
           --network $(docker network ls -qf name=^${CMPS_PRJ}_mailcow-network$) \
-          -v $(docker volume ls -qf name=^${CMPS_PRJ}_mysql-vol-1$):/var/lib/mysql/:ro,z \
-          -t --entrypoint= \
-          --sysctl net.ipv6.conf.all.disable_ipv6=1 \
+          -e PGPASSWORD="${DBPASS}" \
           -v ${BACKUP_LOCATION}/mailcow-${DATE}:/backup:z \
-          ${SQLIMAGE} /bin/sh -c "mariabackup --host mysql --user root --password ${DBROOT} --backup --rsync --target-dir=/backup_mariadb ; \
-          mariabackup --prepare --target-dir=/backup_mariadb ; \
-          chown -R 999:999 /backup_mariadb ; \
-          /bin/tar --warning='no-file-ignored' --use-compress-program='gzip --rsyncable' -Pcvpf /backup/backup_mariadb.tar.gz /backup_mariadb ;"
+          --entrypoint= \
+          ${SQLIMAGE} /bin/sh -c "pg_dump -h postgres -U ${DBUSER} -d ${DBNAME} -Fc -f /backup/backup_postgres.dump && chmod 600 /backup/backup_postgres.dump"
       fi
       ;;&
     --delete-days)
@@ -265,8 +262,8 @@ function restore() {
         ${DEBIAN_DOCKER_IMAGE} /bin/tar --use-compress-program="pigz -d -p ${THREADS}" -Pxvf /backup/backup_postfix.tar.gz
       docker start $(docker ps -aqf name=postfix-mailcow)
       ;;
-    mysql|mariadb)
-      SQLIMAGE=$(grep -iEo '(mysql|mariadb)\:.+' ${COMPOSE_FILE})
+    mysql|mariadb|postgres)
+      SQLIMAGE=$(grep -iEo 'postgres\:.+' ${COMPOSE_FILE} | head -n1)
       if [[ -z "${SQLIMAGE}" ]]; then
         echo "Could not determine SQL image version, skipping restore..."
         shift
@@ -274,6 +271,11 @@ function restore() {
       elif [ ! -f "${RESTORE_LOCATION}/mailcow.conf" ]; then
         echo "Could not find the corresponding mailcow.conf in ${RESTORE_LOCATION}, skipping restore."
         echo "If you lost that file, copy the last working mailcow.conf file to ${RESTORE_LOCATION} and restart the restore process."
+        shift
+        continue
+      elif [ ! -f "${RESTORE_LOCATION}/backup_postgres.dump" ]; then
+        echo "Could not find backup_postgres.dump in ${RESTORE_LOCATION}."
+        echo "Backups of the former MariaDB stack must be migrated with helper-scripts/migrate-mysql-to-postgres.py instead."
         shift
         continue
       else
@@ -286,34 +288,6 @@ function restore() {
           echo "Stopping mailcow..."
           ${COMPOSE_COMMAND} -f ${COMPOSE_FILE} --env-file ${ENV_FILE} down
         fi
-        #docker stop $(docker ps -qf name=mysql-mailcow)
-        if [[ -d "${RESTORE_LOCATION}/mysql" ]]; then
-        docker run --name mailcow-backup --rm \
-          -v $(docker volume ls -qf name=^${CMPS_PRJ}_mysql-vol-1$):/var/lib/mysql/:rw,z \
-          --entrypoint= \
-          -v ${RESTORE_LOCATION}/mysql:/backup:z \
-          ${SQLIMAGE} /bin/bash -c "shopt -s dotglob ; /bin/rm -rf /var/lib/mysql/* ; rsync -avh --usermap=root:mysql --groupmap=root:mysql /backup/ /var/lib/mysql/"
-        elif [[ -f "${RESTORE_LOCATION}/backup_mysql.gz" ]]; then
-        docker run \
-          -i --name mailcow-backup --rm \
-          -v $(docker volume ls -qf name=^${CMPS_PRJ}_mysql-vol-1$):/var/lib/mysql/:z \
-          --entrypoint= \
-          -u mysql \
-          -v ${RESTORE_LOCATION}:/backup:z \
-          ${SQLIMAGE} /bin/sh -c "mysqld --skip-grant-tables & \
-          until mysqladmin ping; do sleep 3; done && \
-          echo Restoring... && \
-          gunzip < backup/backup_mysql.gz | mysql -uroot && \
-          mysql -uroot -e SHUTDOWN;"
-        elif [[ -f "${RESTORE_LOCATION}/backup_mariadb.tar.gz" ]]; then
-        docker run --name mailcow-backup --rm \
-          -v $(docker volume ls -qf name=^${CMPS_PRJ}_mysql-vol-1$):/backup_mariadb/:rw,z \
-          --entrypoint= \
-          -v ${RESTORE_LOCATION}:/backup:z \
-          ${SQLIMAGE} /bin/bash -c "shopt -s dotglob ; \
-            /bin/rm -rf /backup_mariadb/* ; \
-            /bin/tar -Pxvzf /backup/backup_mariadb.tar.gz"
-        fi
         echo "Modifying mailcow.conf..."
         source ${RESTORE_LOCATION}/mailcow.conf
         sed -i --follow-symlinks "/DBNAME/c\DBNAME=${DBNAME}" ${SCRIPT_DIR}/../mailcow.conf
@@ -321,9 +295,18 @@ function restore() {
         sed -i --follow-symlinks "/DBPASS/c\DBPASS=${DBPASS}" ${SCRIPT_DIR}/../mailcow.conf
         sed -i --follow-symlinks "/DBROOT/c\DBROOT=${DBROOT}" ${SCRIPT_DIR}/../mailcow.conf
         source ${SCRIPT_DIR}/../mailcow.conf
+        echo "Starting database..."
+        ${COMPOSE_COMMAND} -f ${COMPOSE_FILE} --env-file ${ENV_FILE} up -d postgres-mailcow
+        until docker exec $(docker ps -qf name=postgres-mailcow) pg_isready -U ${DBUSER} -d ${DBNAME} -q; do sleep 2; done
+        echo "Restoring..."
+        docker run -i --name mailcow-backup --rm \
+          --network $(docker network ls -qf name=^${CMPS_PRJ}_mailcow-network$) \
+          -e PGPASSWORD="${DBPASS}" \
+          -v ${RESTORE_LOCATION}:/backup:z \
+          --entrypoint= \
+          ${SQLIMAGE} /bin/sh -c "pg_restore -h postgres -U ${DBUSER} -d ${DBNAME} --clean --if-exists --no-owner --no-privileges /backup/backup_postgres.dump"
         echo "Starting mailcow..."
         ${COMPOSE_COMMAND} -f ${COMPOSE_FILE} --env-file ${ENV_FILE} up -d
-        #docker start $(docker ps -aqf name=mysql-mailcow)
       fi
       ;;
     esac
@@ -357,14 +340,14 @@ elif [[ ${1} == "restore" ]]; then
   echo
   declare -A FILE_SELECTION
   RESTORE_POINT="${FOLDER_SELECTION[${input_sel}]}"
-  if [[ -z $(find "${FOLDER_SELECTION[${input_sel}]}" -maxdepth 1 \( -type d -o -type f \) -regex ".*\(redis\|rspamd\|mariadb\|mysql\|crypt\|vmail\|postfix\).*") ]]; then
+  if [[ -z $(find "${FOLDER_SELECTION[${input_sel}]}" -maxdepth 1 \( -type d -o -type f \) -regex ".*\(redis\|rspamd\|postgres\|mariadb\|mysql\|crypt\|vmail\|postfix\).*") ]]; then
     echo "No datasets found"
     exit 1
   fi
 
   echo "[ 0 ] - all"
   # find all files in folder with *.gz extension, print their base names, remove backup_, remove .tar (if present), remove .gz
-  FILE_SELECTION[0]=$(find "${FOLDER_SELECTION[${input_sel}]}" -maxdepth 1 \( -type d -o -type f \) \( -name '*.gz' -o -name 'mysql' \) -printf '%f\n' | sed 's/backup_*//' | sed 's/\.[^.]*$//' | sed 's/\.[^.]*$//')
+  FILE_SELECTION[0]=$(find "${FOLDER_SELECTION[${input_sel}]}" -maxdepth 1 \( -type d -o -type f \) \( -name '*.gz' -o -name '*.dump' -o -name 'mysql' \) -printf '%f\n' | sed 's/backup_*//' | sed 's/\.[^.]*$//' | sed 's/\.[^.]*$//')
   for file in $(ls -f "${FOLDER_SELECTION[${input_sel}]}"); do
     if [[ ${file} =~ vmail ]]; then
       echo "[ ${i} ] - Mail directory (/var/vmail)"
@@ -394,9 +377,9 @@ elif [[ ${1} == "restore" ]]; then
       echo "[ ${i} ] - Postfix data"
       FILE_SELECTION[${i}]="postfix"
       ((i++))
-    elif [[ ${file} =~ mysql ]] || [[ ${file} =~ mariadb ]]; then
+    elif [[ ${file} =~ postgres ]] || [[ ${file} =~ mysql ]] || [[ ${file} =~ mariadb ]]; then
       echo "[ ${i} ] - SQL DB"
-      FILE_SELECTION[${i}]="mysql"
+      FILE_SELECTION[${i}]="postgres"
       ((i++))
     fi
   done

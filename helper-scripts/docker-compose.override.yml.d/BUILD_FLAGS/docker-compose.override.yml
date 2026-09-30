@@ -8,8 +8,8 @@ services:
   rspamd-mailcow:
     build: ./data/Dockerfiles/rspamd
 
-  php-fpm-mailcow:
-    build: ./data/Dockerfiles/phpfpm
+  api-mailcow:
+    build: ./data/Dockerfiles/api
 
   sogo-mailcow:
     build:

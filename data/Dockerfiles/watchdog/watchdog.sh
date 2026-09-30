@@ -33,7 +33,11 @@ if [[ ! -p /tmp/com_pipe ]]; then
 fi
 
 # Wait for containers
-while ! mariadb-admin status --ssl=false --socket=/var/run/mysqld/mysqld.sock -u${DBUSER} -p${DBPASS} --silent; do
+export PGPASSWORD="${DBPASS}"
+DBHOST=${DBHOST:-postgres}
+DBPORT=${DBPORT:-5432}
+PSQL="psql -h ${DBHOST} -p ${DBPORT} -U ${DBUSER} -d ${DBNAME} -qtA"
+while ! pg_isready -h ${DBHOST} -p ${DBPORT} -U ${DBUSER} -d ${DBNAME} -q; do
   echo "Waiting for SQL..."
   sleep 2
 done
@@ -234,7 +238,7 @@ external_checks() {
   diff_c=0
   THRESHOLD=${EXTERNAL_CHECKS_THRESHOLD}
   # Reduce error count by 2 after restarting an unhealthy container
-  GUID=$(mariadb --skip-ssl -u${DBUSER} -p${DBPASS} ${DBNAME} -e "SELECT version FROM versions WHERE application = 'GUID'" -BN)
+  GUID=$(${PSQL} -c "SELECT version FROM versions WHERE application = 'GUID'")
   trap "[ ${err_count} -gt 1 ] && err_count=$(( ${err_count} - 2 ))" USR1
   while [ ${err_count} -lt ${THRESHOLD} ]; do
     err_c_cur=${err_count}
@@ -345,20 +349,20 @@ redis_checks() {
   return 1
 }
 
-mysql_checks() {
+postgres_checks() {
   err_count=0
   diff_c=0
   THRESHOLD=${MYSQL_THRESHOLD}
   # Reduce error count by 2 after restarting an unhealthy container
   trap "[ ${err_count} -gt 1 ] && err_count=$(( ${err_count} - 2 ))" USR1
   while [ ${err_count} -lt ${THRESHOLD} ]; do
-    touch /tmp/mysql-mailcow; echo "$(tail -50 /tmp/mysql-mailcow)" > /tmp/mysql-mailcow
+    touch /tmp/postgres-mailcow; echo "$(tail -50 /tmp/postgres-mailcow)" > /tmp/postgres-mailcow
     err_c_cur=${err_count}
-    /usr/lib/nagios/plugins/check_mysql -s /var/run/mysqld/mysqld.sock -u ${DBUSER} -p ${DBPASS} -d ${DBNAME} 2>> /tmp/mysql-mailcow 1>&2; err_count=$(( ${err_count} + $? ))
-    /usr/lib/nagios/plugins/check_mysql_query -s /var/run/mysqld/mysqld.sock -u ${DBUSER} -p ${DBPASS} -d ${DBNAME} -q "SELECT COUNT(*) FROM information_schema.tables" 2>> /tmp/mysql-mailcow 1>&2; err_count=$(( ${err_count} + $? ))
+    /usr/lib/nagios/plugins/check_pgsql -H ${DBHOST} -P ${DBPORT} -l ${DBUSER} -p "${DBPASS}" -d ${DBNAME} 2>> /tmp/postgres-mailcow 1>&2; err_count=$(( ${err_count} + $? ))
+    /usr/lib/nagios/plugins/check_pgsql -H ${DBHOST} -P ${DBPORT} -l ${DBUSER} -p "${DBPASS}" -d ${DBNAME} -q "SELECT COUNT(*) FROM information_schema.tables" 2>> /tmp/postgres-mailcow 1>&2; err_count=$(( ${err_count} + $? ))
     [ ${err_c_cur} -eq ${err_count} ] && [ ! $((${err_count} - 1)) -lt 0 ] && err_count=$((${err_count} - 1)) diff_c=1
     [ ${err_c_cur} -ne ${err_count} ] && diff_c=$(( ${err_c_cur} - ${err_count} ))
-    progress "MySQL/MariaDB" ${THRESHOLD} $(( ${THRESHOLD} - ${err_count} )) ${diff_c}
+    progress "PostgreSQL" ${THRESHOLD} $(( ${THRESHOLD} - ${err_count} )) ${diff_c}
     if [[ $? == 10 ]]; then
       diff_c=0
       sleep 1
@@ -370,19 +374,21 @@ mysql_checks() {
   return 1
 }
 
-mysql_repl_checks() {
+postgres_repl_checks() {
   err_count=0
   diff_c=0
   THRESHOLD=${MYSQL_REPLICATION_THRESHOLD}
   # Reduce error count by 2 after restarting an unhealthy container
   trap "[ ${err_count} -gt 1 ] && err_count=$(( ${err_count} - 2 ))" USR1
   while [ ${err_count} -lt ${THRESHOLD} ]; do
-    touch /tmp/mysql_repl_checks; echo "$(tail -50 /tmp/mysql_repl_checks)" > /tmp/mysql_repl_checks
+    touch /tmp/postgres_repl_checks; echo "$(tail -50 /tmp/postgres_repl_checks)" > /tmp/postgres_repl_checks
     err_c_cur=${err_count}
-    /usr/lib/nagios/plugins/check_mysql_slavestatus.sh -S /var/run/mysqld/mysqld.sock -u root -p ${DBROOT} 2>> /tmp/mysql_repl_checks 1>&2; err_count=$(( ${err_count} + $? ))
+    # a streaming replica is healthy when it is in recovery and has replayed WAL within the last 5 minutes
+    REPL_STATE=$(${PSQL} -c "SELECT CASE WHEN pg_is_in_recovery() AND (pg_last_xact_replay_timestamp() IS NULL OR EXTRACT(EPOCH FROM (NOW() - pg_last_xact_replay_timestamp())) < 300) THEN 'OK' ELSE 'FAIL' END" 2>> /tmp/postgres_repl_checks)
+    [[ "${REPL_STATE}" == "OK" ]] || err_count=$(( ${err_count} + 1 ))
     [ ${err_c_cur} -eq ${err_count} ] && [ ! $((${err_count} - 1)) -lt 0 ] && err_count=$((${err_count} - 1)) diff_c=1
     [ ${err_c_cur} -ne ${err_count} ] && diff_c=$(( ${err_c_cur} - ${err_count} ))
-    progress "MySQL/MariaDB replication" ${THRESHOLD} $(( ${THRESHOLD} - ${err_count} )) ${diff_c}
+    progress "PostgreSQL replication" ${THRESHOLD} $(( ${THRESHOLD} - ${err_count} )) ${diff_c}
     if [[ $? == 10 ]]; then
       diff_c=0
       sleep 60
@@ -548,21 +554,20 @@ cert_checks() {
   return 1
 }
 
-phpfpm_checks() {
+api_checks() {
   err_count=0
   diff_c=0
   THRESHOLD=${PHPFPM_THRESHOLD}
   # Reduce error count by 2 after restarting an unhealthy container
   trap "[ ${err_count} -gt 1 ] && err_count=$(( ${err_count} - 2 ))" USR1
   while [ ${err_count} -lt ${THRESHOLD} ]; do
-    touch /tmp/php-fpm-mailcow; echo "$(tail -50 /tmp/php-fpm-mailcow)" > /tmp/php-fpm-mailcow
-    host_ip=$(get_container_ip php-fpm-mailcow)
+    touch /tmp/api-mailcow; echo "$(tail -50 /tmp/api-mailcow)" > /tmp/api-mailcow
+    host_ip=$(get_container_ip api-mailcow)
     err_c_cur=${err_count}
-    /usr/lib/nagios/plugins/check_tcp -H ${host_ip} -p 9001 2>> /tmp/php-fpm-mailcow 1>&2; err_count=$(( ${err_count} + $? ))
-    /usr/lib/nagios/plugins/check_tcp -H ${host_ip} -p 9002 2>> /tmp/php-fpm-mailcow 1>&2; err_count=$(( ${err_count} + $? ))
+    /usr/lib/nagios/plugins/check_http -4 -H ${host_ip} -p 8080 -u /healthz -e "200" 2>> /tmp/api-mailcow 1>&2; err_count=$(( ${err_count} + $? ))
     [ ${err_c_cur} -eq ${err_count} ] && [ ! $((${err_count} - 1)) -lt 0 ] && err_count=$((${err_count} - 1)) diff_c=1
     [ ${err_c_cur} -ne ${err_count} ] && diff_c=$(( ${err_c_cur} - ${err_count} ))
-    progress "PHP-FPM" ${THRESHOLD} $(( ${THRESHOLD} - ${err_count} )) ${diff_c}
+    progress "API" ${THRESHOLD} $(( ${THRESHOLD} - ${err_count} )) ${diff_c}
     if [[ $? == 10 ]]; then
       diff_c=0
       sleep 1
@@ -809,27 +814,27 @@ fi
 if [[ ${WATCHDOG_MYSQL_REPLICATION_CHECKS} =~ ^([yY][eE][sS]|[yY])+$ ]]; then
 (
 while true; do
-  if ! mysql_repl_checks; then
-    log_msg "MySQL replication check hit error limit"
-    echo mysql_repl_checks > /tmp/com_pipe
+  if ! postgres_repl_checks; then
+    log_msg "PostgreSQL replication check hit error limit"
+    echo postgres_repl_checks > /tmp/com_pipe
   fi
 done
 ) &
 PID=$!
-echo "Spawned mysql_repl_checks with PID ${PID}"
+echo "Spawned postgres_repl_checks with PID ${PID}"
 BACKGROUND_TASKS+=(${PID})
 fi
 
 (
 while true; do
-  if ! mysql_checks; then
-    log_msg "MySQL hit error limit"
-    echo mysql-mailcow > /tmp/com_pipe
+  if ! postgres_checks; then
+    log_msg "PostgreSQL hit error limit"
+    echo postgres-mailcow > /tmp/com_pipe
   fi
 done
 ) &
 PID=$!
-echo "Spawned mysql_checks with PID ${PID}"
+echo "Spawned postgres_checks with PID ${PID}"
 BACKGROUND_TASKS+=(${PID})
 
 (
@@ -846,14 +851,14 @@ BACKGROUND_TASKS+=(${PID})
 
 (
 while true; do
-  if ! phpfpm_checks; then
-    log_msg "PHP-FPM hit error limit"
-    echo php-fpm-mailcow > /tmp/com_pipe
+  if ! api_checks; then
+    log_msg "API hit error limit"
+    echo api-mailcow > /tmp/com_pipe
   fi
 done
 ) &
 PID=$!
-echo "Spawned phpfpm_checks with PID ${PID}"
+echo "Spawned api_checks with PID ${PID}"
 BACKGROUND_TASKS+=(${PID})
 
 if [[ "${SKIP_SOGO}" =~ ^([nN][oO]|[nN])+$ ]]; then
@@ -1065,8 +1070,8 @@ while true; do
     log_msg "Your mailcow is an open relay!"
     # Define $2 to override message text, else print service was restarted at ...
     notify_error "${com_pipe_answer}" "Please stop mailcow now and check your network configuration!"
-  elif [[ ${com_pipe_answer} == "mysql_repl_checks" ]]; then
-    log_msg "MySQL replication is not working properly"
+  elif [[ ${com_pipe_answer} == "postgres_repl_checks" ]]; then
+    log_msg "PostgreSQL replication is not working properly"
     # Define $2 to override message text, else print service was restarted at ...
     # Once mail per 10 minutes
     notify_error "${com_pipe_answer}" "Please check the SQL replication status" 600
@@ -1101,14 +1106,14 @@ while true; do
     sleep 10
     CONTAINER_ID=$(curl --silent --insecure https://dockerapi.${COMPOSE_PROJECT_NAME}_mailcow-network/containers/json | jq -r ".[] | {name: .Config.Labels[\"com.docker.compose.service\"], project: .Config.Labels[\"com.docker.compose.project\"], id: .Id}" | jq -rc "select( .name | tostring | contains(\"${com_pipe_answer}\")) | select( .project | tostring | contains(\"${COMPOSE_PROJECT_NAME,,}\")) | .id")
     if [[ ! -z ${CONTAINER_ID} ]]; then
-      if [[ "${com_pipe_answer}" == "php-fpm-mailcow" ]]; then
-        HAS_INITDB=$(curl --silent --insecure -XPOST https://dockerapi.${COMPOSE_PROJECT_NAME}_mailcow-network/containers/${CONTAINER_ID}/top | jq '.msg.Processes[] | contains(["php -c /usr/local/etc/php -f /web/inc/init_db.inc.php"])' | grep true)
+      if [[ "${com_pipe_answer}" == "api-mailcow" ]]; then
+        HAS_INITDB=$(curl --silent --insecure -XPOST https://dockerapi.${COMPOSE_PROJECT_NAME}_mailcow-network/containers/${CONTAINER_ID}/top | jq '.msg.Processes[] | contains(["mailcow.dbinit"])' | grep true)
       fi
       S_RUNNING=$(($(date +%s) - $(curl --silent --insecure https://dockerapi.${COMPOSE_PROJECT_NAME}_mailcow-network/containers/${CONTAINER_ID}/json | jq .State.StartedAt | xargs -n1 date +%s -d)))
       if [ ${S_RUNNING} -lt 360 ]; then
         log_msg "Container is running for less than 360 seconds, skipping action..."
       elif [[ ! -z ${HAS_INITDB} ]]; then
-        log_msg "Database is being initialized by php-fpm-mailcow, not restarting but delaying checks for a minute..."
+        log_msg "Database is being initialized by api-mailcow, not restarting but delaying checks for a minute..."
         sleep 60
       else
         log_msg "Sending restart command to ${CONTAINER_ID}..."

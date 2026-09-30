@@ -29,6 +29,16 @@ A big thank you to everyone supporting us on GitHub Sponsors—your contribution
     src="https://avatars.githubusercontent.com/u/7805987?s=52&v=4" height="58"
   /></a>
 
+## Python + PostgreSQL stack (this branch)
+
+This branch runs the mailcow UI/API as a Python service (`api-mailcow`, FastAPI) on top of PostgreSQL 16
+(`postgres-mailcow`) instead of PHP-FPM on MariaDB. The mail components (Postfix, Dovecot, Rspamd, SOGo, ...)
+are unchanged and read their lookup tables from PostgreSQL. Security behaviour of the original UI (password
+schemes, sessions, CSRF, fail2ban integration, API keys with IP allow lists, roles/ACLs, two-factor auth) is kept.
+
+See [docs/PYTHON_POSTGRES_PORT.md](docs/PYTHON_POSTGRES_PORT.md) for the layout, the migration procedure from an
+existing MariaDB installation and the list of features that are not ported yet.
+
 ## Info, documentation and support
 
 Please see [the official documentation](https://docs.mailcow.email/) for installation and support instructions. 🐄

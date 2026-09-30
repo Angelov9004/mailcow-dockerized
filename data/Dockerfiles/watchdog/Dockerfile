@@ -8,14 +8,14 @@ RUN apk add --update \
   nagios-plugins-tcp \
   nagios-plugins-http \
   nagios-plugins-ping \
-  mariadb-client \
+  postgresql-client \
   curl \
   bash \
   coreutils \
   jq \
   fcgi \
   openssl \
-  nagios-plugins-mysql \
+  nagios-plugins-pgsql \
   nagios-plugins-dns \
   nagios-plugins-disk \
   bind-tools \
@@ -35,6 +35,5 @@ RUN apk add --update \
   && chmod +x smtp-cli
 
 COPY watchdog.sh /watchdog.sh
-COPY check_mysql_slavestatus.sh /usr/lib/nagios/plugins/check_mysql_slavestatus.sh
 
 CMD ["/watchdog.sh"]

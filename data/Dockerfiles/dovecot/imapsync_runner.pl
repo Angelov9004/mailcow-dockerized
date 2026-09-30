@@ -36,13 +36,14 @@ sub qqw($) {
 }
 
 $run_dir="/tmp";
-$dsn = 'DBI:mysql:database=' . $ENV{'DBNAME'} . ';mysql_socket=/var/run/mysqld/mysqld.sock';
+$dsn = 'DBI:Pg:dbname=' . $ENV{'DBNAME'} . ';host=' . ($ENV{'DBHOST'} // 'postgres') . ';port=' . ($ENV{'DBPORT'} // '5432');
 $lock_file = $run_dir . "/imapsync_busy";
 $lockmgr = LockFile::Simple->make(-autoclean => 1, -max => 1);
 $lockmgr->lock($lock_file) || die "can't lock ${lock_file}";
 $dbh = DBI->connect($dsn, $ENV{'DBUSER'}, $ENV{'DBPASS'}, {
-  mysql_auto_reconnect => 1,
-  mysql_enable_utf8mb4 => 1
+  AutoCommit => 1,
+  RaiseError => 1,
+  pg_enable_utf8 => 1
 });
 $dbh->do("UPDATE imapsync SET is_running = 0");
 
@@ -81,7 +82,7 @@ my $sth = $dbh->prepare("SELECT id,
       WHERE active = 1
         AND is_running = 0
         AND (
-          UNIX_TIMESTAMP(NOW()) - UNIX_TIMESTAMP(last_run) > mins_interval * 60
+          EXTRACT(EPOCH FROM (NOW() - last_run)) > mins_interval * 60
           OR
           last_run IS NULL)
   ORDER BY last_run");

@@ -1,11 +1,11 @@
 #!/bin/sh
 
-PHPFPMHOST=${PHPFPMHOST:-"php-fpm-mailcow"}
+APIHOST=${APIHOST:-"api-mailcow"}
 SOGOHOST=${SOGOHOST:-"$IPV4_NETWORK.248"}
 RSPAMDHOST=${RSPAMDHOST:-"rspamd-mailcow"}
 
-until ping ${PHPFPMHOST} -c1 > /dev/null; do
-  echo "Waiting for PHP..."
+until ping ${APIHOST} -c1 > /dev/null; do
+  echo "Waiting for API..."
   sleep 1
 done
 if ! printf "%s\n" "${SKIP_SOGO}" | grep -E '^([yY][eE][sS]|[yY])+$' >/dev/null; then

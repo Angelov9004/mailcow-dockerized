@@ -44,7 +44,6 @@ http {
     {% if HTTP_REDIRECT %}
     # HTTP to HTTPS redirect
     server {
-        root /web;
         listen {{ HTTP_PORT }} default_server;
         listen [::]:{{ HTTP_PORT }} default_server;
 
@@ -54,6 +53,7 @@ http {
         location ^~ /.well-known/acme-challenge/ {
             allow all;
             default_type "text/plain";
+            alias /etc/nginx/conf.d/acme-challenge/;
         }
         location / {
             return 301 https://$host$uri$is_args$args;
@@ -115,70 +115,57 @@ http {
     }
     {% endfor %}
 
-    # rspamd dynmaps:
+    # rspamd dynmaps (alias expansion, bcc maps, footers, forwarding hosts, settings map) -> mailcow API
     server {
         listen 8081;
         {% if not DISABLE_IPv6 %}
         listen [::]:8081;
         {%endif%}
-        index index.php index.html;
         server_name _;
         error_log  /var/log/nginx/error.log;
         access_log /var/log/nginx/access.log;
-        root /dynmaps;
 
-        location ~ \.php$ {
-            try_files $uri =404;
-            fastcgi_split_path_info ^(.+\.php)(/.+)$;
-            fastcgi_pass {{ PHPFPMHOST }}:9001;
-            fastcgi_index index.php;
-            include fastcgi_params;
-            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-            fastcgi_param PATH_INFO $fastcgi_path_info;
+        location / {
+            proxy_http_version 1.1;
+            proxy_pass_request_headers on;
+            proxy_set_header Host $http_host;
+            proxy_pass http://{{ APIHOST }}:8080/internal/dynmaps/;
         }
     }
 
-    # rspamd meta_exporter:
+    # rspamd meta_exporter (quarantine intake, ratelimit log, pushover) -> mailcow API
     server {
         listen 9081;
-        index index.php index.html;
         server_name _;
         error_log  /var/log/nginx/error.log;
         access_log /var/log/nginx/access.log;
-        root /meta_exporter;
         client_max_body_size 10M;
-        location ~ \.php$ {
-            client_max_body_size 10M;
-            try_files $uri =404;
-            fastcgi_split_path_info ^(.+\.php)(/.+)$;
-            fastcgi_pass {{ PHPFPMHOST }}:9001;
-            fastcgi_index pipe.php;
-            include fastcgi_params;
-            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-            fastcgi_param PATH_INFO $fastcgi_path_info;
+
+        location / {
+            proxy_http_version 1.1;
+            proxy_pass_request_headers on;
+            proxy_set_header Host $http_host;
+            proxy_pass http://{{ APIHOST }}:8080/internal/meta_exporter/;
         }
     }
 
+    # Dovecot passdb (passwd-verify.lua) -> mailcow API, TLS terminated here
     server {
-        listen 9082 ssl http2;
+        listen 9082 ssl;
+        http2 on;
 
         ssl_certificate /etc/ssl/mail/cert.pem;
         ssl_certificate_key /etc/ssl/mail/key.pem;
 
-        index mailcowauth.php;
         server_name _;
         error_log  /var/log/nginx/error.log;
         access_log /var/log/nginx/access.log;
-        root /mailcowauth;
         client_max_body_size 10M;
-        location ~ \.php$ {
-            client_max_body_size 10M;
-            try_files $uri =404;
-            fastcgi_split_path_info ^(.+\.php)(/.+)$;
-            fastcgi_pass phpfpm:9001;
-            include fastcgi_params;
-            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-            fastcgi_param PATH_INFO $fastcgi_path_info;
+
+        location / {
+            proxy_http_version 1.1;
+            proxy_set_header Host $http_host;
+            proxy_pass http://{{ APIHOST }}:8080/internal/auth;
         }
     }
 

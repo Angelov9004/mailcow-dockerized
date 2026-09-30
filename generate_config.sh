@@ -235,13 +235,15 @@ MAILCOW_HOSTNAME=${MAILCOW_HOSTNAME}
 MAILCOW_PASS_SCHEME=BLF-CRYPT
 
 # ------------------------------
-# SQL database configuration
+# SQL database configuration (PostgreSQL)
 # ------------------------------
 
 DBNAME=mailcow
 DBUSER=mailcow
 
 # Please use long, random alphanumeric strings (A-Za-z0-9)
+# DBUSER owns the database cluster of the postgres-mailcow container.
+# DBROOT is kept for compatibility with older tooling and is not used by the stack.
 
 DBPASS=$(LC_ALL=C </dev/urandom tr -dc A-Za-z0-9 2> /dev/null | head -c 28)
 DBROOT=$(LC_ALL=C </dev/urandom tr -dc A-Za-z0-9 2> /dev/null | head -c 28)
@@ -289,7 +291,7 @@ POP_PORT=110
 POPS_PORT=995
 SIEVE_PORT=4190
 DOVEADM_PORT=127.0.0.1:19991
-SQL_PORT=127.0.0.1:13306
+SQL_PORT=127.0.0.1:15432
 REDIS_PORT=127.0.0.1:7654
 
 # Your timezone
@@ -529,7 +531,22 @@ openssl req -x509 -newkey rsa:4096 -keyout data/assets/ssl-example/key.pem -out 
 echo "Copying snake-oil certificate..."
 cp -n -d data/assets/ssl-example/*.pem data/assets/ssl/
 
-# Set app_info.inc.php
+# Set data/api/app_info.json (read by the API for /api/v1/get/status/version)
+write_app_info() {
+  cat <<EOF > data/api/app_info.json
+{
+  "MAILCOW_GIT_VERSION": "$1",
+  "MAILCOW_LAST_GIT_VERSION": "",
+  "MAILCOW_GIT_OWNER": "mailcow",
+  "MAILCOW_GIT_REPO": "mailcow-dockerized",
+  "MAILCOW_GIT_URL": "https://github.com/mailcow/mailcow-dockerized",
+  "MAILCOW_GIT_COMMIT": "$2",
+  "MAILCOW_GIT_COMMIT_DATE": "$3",
+  "MAILCOW_BRANCH": "$4",
+  "MAILCOW_UPDATEDAT": $(date +%s)
+}
+EOF
+}
 case ${git_branch} in
   master)
     mailcow_git_version=$(git describe --tags `git rev-list --tags --max-count=1`)
@@ -567,29 +584,9 @@ git_branch=$(git rev-parse --abbrev-ref HEAD)
 fi
 
 if [ $? -eq 0 ]; then
-  echo '<?php' > data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_GIT_VERSION="'$mailcow_git_version'";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_LAST_GIT_VERSION="";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_GIT_OWNER="mailcow";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_GIT_REPO="mailcow-dockerized";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_GIT_URL="https://github.com/mailcow/mailcow-dockerized";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_GIT_COMMIT="'$mailcow_git_commit'";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_GIT_COMMIT_DATE="'$mailcow_git_commit_date'";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_BRANCH="'$git_branch'";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_UPDATEDAT='$(date +%s)';' >> data/web/inc/app_info.inc.php
-  echo '?>' >> data/web/inc/app_info.inc.php
+  write_app_info "${mailcow_git_version}" "${mailcow_git_commit}" "${mailcow_git_commit_date}" "${git_branch}"
 else
-  echo '<?php' > data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_GIT_VERSION="'$mailcow_git_version'";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_LAST_GIT_VERSION="";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_GIT_OWNER="mailcow";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_GIT_REPO="mailcow-dockerized";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_GIT_URL="https://github.com/mailcow/mailcow-dockerized";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_GIT_COMMIT="";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_GIT_COMMIT_DATE="";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_BRANCH="'$git_branch'";' >> data/web/inc/app_info.inc.php
-  echo '  $MAILCOW_UPDATEDAT='$(date +%s)';' >> data/web/inc/app_info.inc.php
-  echo '?>' >> data/web/inc/app_info.inc.php
+  write_app_info "${mailcow_git_version}" "" "" "${git_branch}"
   echo -e "\e[33mCannot determine current git repository version...\e[0m"
 fi
 

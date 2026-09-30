@@ -7,10 +7,10 @@ if [[ -z ${DBUSER} ]] || [[ -z ${DBPASS} ]] || [[ -z ${DBNAME} ]]; then
 	exit 1
 fi
 
-echo -n "Checking MySQL service... "
-if [[ -z $(docker ps -qf name=mysql-mailcow) ]]; then
+echo -n "Checking PostgreSQL service... "
+if [[ -z $(docker ps -qf name=postgres-mailcow) ]]; then
 	echo "failed"
-	echo "MySQL (mysql-mailcow) is not up and running, exiting..."
+	echo "PostgreSQL (postgres-mailcow) is not up and running, exiting..."
 	exit 1
 fi
 
@@ -21,10 +21,11 @@ if [[ "$response" =~ ^(yes|y)$ ]]; then
 	echo -e "\nWorking, please wait..."
   random=$(</dev/urandom tr -dc _A-Z-a-z-0-9 2> /dev/null | head -c${1:-16})
   password=$(docker exec -it $(docker ps -qf name=dovecot-mailcow) doveadm pw -s SSHA256 -p ${random} | tr -d '\r')
-	docker exec -it $(docker ps -qf name=mysql-mailcow) mysql -u${DBUSER} -p${DBPASS} ${DBNAME} -e "DELETE FROM admin WHERE username='admin';"
-  docker exec -it $(docker ps -qf name=mysql-mailcow) mysql -u${DBUSER} -p${DBPASS} ${DBNAME} -e "DELETE FROM domain_admins WHERE username='admin';"
-	docker exec -it $(docker ps -qf name=mysql-mailcow) mysql -u${DBUSER} -p${DBPASS} ${DBNAME} -e "INSERT INTO admin (username, password, superadmin, active) VALUES ('admin', '${password}', 1, 1);"
-	docker exec -it $(docker ps -qf name=mysql-mailcow) mysql -u${DBUSER} -p${DBPASS} ${DBNAME} -e "DELETE FROM tfa WHERE username='admin';"
+  PSQL="docker exec -i -e PGPASSWORD=${DBPASS} $(docker ps -qf name=postgres-mailcow) psql -U ${DBUSER} -d ${DBNAME} -qtA -c"
+	${PSQL} "DELETE FROM admin WHERE username='admin';"
+	${PSQL} "DELETE FROM domain_admins WHERE username='admin';"
+	${PSQL} "INSERT INTO admin (username, password, superadmin, active) VALUES ('admin', '${password}', 1, 1);"
+	${PSQL} "DELETE FROM tfa WHERE username='admin';"
 	echo "
 Reset credentials:
 ---
